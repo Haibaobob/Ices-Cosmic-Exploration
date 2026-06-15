@@ -296,6 +296,13 @@ namespace ICE.Utilities
             else
                 return CosmicHelper.Status.None;
         }
+        // Resolved once: newer FFXIVClientStructs exposes 'ScoreUInt' (uint), but older builds
+        // (e.g. the CN client's Dalamud) only have 'Score' (ushort) at the same offset. Binding the
+        // field name at compile time throws MissingFieldException at runtime on the mismatched build,
+        // which silently broke all score/rank detection. Read it by reflection to support both.
+        private static System.Reflection.FieldInfo _scoreField;
+        private static bool _scoreFieldResolved;
+
         internal static unsafe uint GetScore()
         {
             var manager = WKSManager.Instance();
@@ -304,8 +311,24 @@ namespace ICE.Utilities
             var missionManager = manager->MissionModule;
             if (missionManager == null) return 0;
 
-            var mission = manager->State.CurrentMission;
-            return mission.ScoreUInt;
+            object mission = manager->State.CurrentMission;
+
+            if (!_scoreFieldResolved)
+            {
+                var t = mission.GetType();
+                _scoreField = t.GetField("ScoreUInt") ?? t.GetField("Score");
+                _scoreFieldResolved = true;
+                IceLogging.Info($"Resolved mission score field: {_scoreField?.Name ?? "<none found>"}", "[CosmicHandler.GetScore]");
+            }
+
+            if (_scoreField == null) return 0;
+
+            try { return Convert.ToUInt32(_scoreField.GetValue(mission)); }
+            catch (Exception e)
+            {
+                IceLogging.Error($"Failed reading mission score: {e.Message}", "[CosmicHandler.GetScore]");
+                return 0;
+            }
         }
 
     }
